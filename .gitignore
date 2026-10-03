@@ -1,0 +1,12 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+*.class
+
+.gradle-user/
+*.log
+credentials.properties
+sync.json
+collection-cache.json
