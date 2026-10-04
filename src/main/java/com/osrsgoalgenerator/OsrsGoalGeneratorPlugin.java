@@ -56,7 +56,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
 {
     private static final Logger LOG = Logger.getLogger(OsrsGoalGeneratorPlugin.class.getName());
     private static final int SCHEMA_VERSION = 1;
-    private static final String PLUGIN_VERSION = "0.1.2-alpha8.2";
+    private static final String PLUGIN_VERSION = "0.2.0-beta.1";
     private static final String SYNC_FILE = "sync.json";
     private static final String CACHE_FILE = "collection-cache.json";
     private static final int COLLECTION_HEADER_TITLE_INDEX = 0;
@@ -97,6 +97,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
     private String lastEvent = "startup";
     private long lastSnapshotQueuedAt;
     private long lastHeartbeatAt;
+    private int diaryTicks;
 
     @Provides
     OsrsGoalGeneratorConfig provideConfig(ConfigManager configManager)
@@ -108,6 +109,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
     protected void startUp()
     {
         enabled = true;
+        diaryTicks = 0;
         writeGeneration.incrementAndGet();
         long lifecycle = lifecycleGeneration.incrementAndGet();
         collectionCacheLoaded = false;
@@ -136,6 +138,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
     @Subscribe
     public void onGameStateChanged(GameStateChanged event)
     {
+        diaryTicks = 0;
         if (event.getGameState() == GameState.LOGGED_IN)
         {
             Player player = client.getLocalPlayer();
@@ -158,12 +161,21 @@ public class OsrsGoalGeneratorPlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick tick)
     {
-        if (client.getGameState() != GameState.LOGGED_IN || !collectionCacheLoaded)
+        if (!enabled || client.getGameState() != GameState.LOGGED_IN || !collectionCacheLoaded)
         {
             return;
         }
 
         long now = System.currentTimeMillis();
+        Player diaryPlayer = client.getLocalPlayer();
+        if (diaryPlayer == null || diaryPlayer.getName() == null || diaryPlayer.getName().trim().isEmpty()) return;
+        ensureSessionForPlayer(diaryPlayer.getName());
+        if (diaryTicks < 3) diaryTicks++;
+        if (diaryTicks == 3)
+        {
+            diaryTicks++;
+            queueSnapshot(true, true);
+        }
         long heartbeatMs = Math.max(2, Math.min(10, config.heartbeatSeconds())) * 1000L;
         if (now - lastHeartbeatAt >= heartbeatMs)
         {
@@ -296,6 +308,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
         }
 
         currentPlayerName = clean;
+        diaryTicks = 0;
         sessionStartedAt = Instant.now().toString();
         sessionBaselineXp.clear();
         for (Skill skill : Skill.values())
@@ -402,6 +415,15 @@ public class OsrsGoalGeneratorPlugin extends Plugin
         collectionLog.put("recent_unlocks", new ArrayList<>(recentCollectionUnlocks));
         document.put("collection_log", collectionLog);
 
+        Map<String, Object> diaries = new LinkedHashMap<>();
+        diaries.put("diary_schema", 1);
+        diaries.put("mapping_version", "all-diaries-1");
+        boolean diaryReady = connected && diaryTicks >= 3 && !currentPlayerName.isEmpty();
+        diaries.put("status", diaryReady ? "observed" : connected ? "initializing" : "disconnected");
+        diaries.put("regions", diaryReady
+            ? AllDiaryTasks.capture(client::getVarpValue, client::getVarbitValue)
+            : new LinkedHashMap<>());
+        document.put("diaries", diaries);
         return gson.toJson(document);
     }
 

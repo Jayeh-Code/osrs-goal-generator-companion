@@ -13,6 +13,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.callback.ClientThread;
 import org.junit.Before;
 import org.junit.Test;
@@ -26,6 +28,7 @@ public class BridgeLifecycleTest
     private final MemoryPlugin plugin = new MemoryPlugin();
     private String name = "Test One";
     private int xp = 100;
+    private GameState gameState = GameState.LOGGED_IN;
     private boolean onClientThread;
 
     static class MemoryPlugin extends OsrsGoalGeneratorPlugin
@@ -47,7 +50,9 @@ public class BridgeLifecycleTest
                 switch (method.getName())
                 {
                     case "getLocalPlayer": return player;
-                    case "getGameState": return GameState.LOGGED_IN;
+                    case "getGameState": return gameState;
+                    case "getVarpValue": return 0;
+                    case "getVarbitValue": return 0;
                     case "getSkillExperience": return xp;
                     case "getRealSkillLevel": return 1;
                     case "getTotalLevel": return 24;
@@ -129,6 +134,25 @@ public class BridgeLifecycleTest
         assertFalse(pages.has("Brutus"));
         assertTrue(pages.has("Vorkath"));
         assertEquals(0, snapshot().getAsJsonObject("session").getAsJsonObject("xp_gained").get("Thieving").getAsInt());
+    }
+
+    @Test public void diariesWaitForInitializationAndClearOnLogoutAndAccountChange() throws Exception
+    {
+        plugin.startUp(); drain();
+        assertEquals("initializing", snapshot().getAsJsonObject("diaries").get("status").getAsString());
+        client(() -> plugin.onGameTick(new GameTick()));
+        client(() -> plugin.onGameTick(new GameTick()));
+        snapshotNow(); drain();
+        assertEquals(0, snapshot().getAsJsonObject("diaries").getAsJsonObject("regions").size());
+        client(() -> plugin.onGameTick(new GameTick())); drain();
+        assertEquals(12, snapshot().getAsJsonObject("diaries").getAsJsonObject("regions").size());
+        name = "Test Two"; snapshotNow(); drain();
+        assertEquals("initializing", snapshot().getAsJsonObject("diaries").get("status").getAsString());
+        gameState = GameState.LOGIN_SCREEN;
+        GameStateChanged event = new GameStateChanged(); event.setGameState(gameState);
+        client(() -> plugin.onGameStateChanged(event)); drain();
+        assertEquals("disconnected", snapshot().getAsJsonObject("diaries").get("status").getAsString());
+        assertEquals(0, snapshot().getAsJsonObject("diaries").getAsJsonObject("regions").size());
     }
 
     @Test public void disableDuringLoadCannotPublishConnectedSnapshot()
