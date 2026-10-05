@@ -13,6 +13,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.callback.ClientThread;
@@ -217,5 +219,24 @@ public class BridgeLifecycleTest
         plugin.startUp();
         drain();
         assertTrue(snapshot().get("connected").getAsBoolean());
+    }
+
+    @Test public void bossTotalsRejectPlayerChatDeduplicateAndClearOnAccountChange() throws Exception
+    {
+        plugin.startUp(); drain();
+        ChatMessage event = new ChatMessage();
+        event.setMessage("Your Vorkath kill count is: <col=ff0000>350</col>.");
+        event.setType(ChatMessageType.PUBLICCHAT);
+        client(() -> plugin.onChatMessage(event)); snapshotNow(); drain();
+        assertEquals(0, snapshot().getAsJsonObject("boss_counts").size());
+        event.setType(ChatMessageType.GAMEMESSAGE);
+        client(() -> plugin.onChatMessage(event)); drain();
+        client(() -> plugin.onChatMessage(event)); drain();
+        assertEquals(350, snapshot().getAsJsonObject("boss_counts").get("Vorkath").getAsInt());
+        event.setMessage("Your Vorkath kill count is: 349.");
+        client(() -> plugin.onChatMessage(event)); drain();
+        assertEquals(350, snapshot().getAsJsonObject("boss_counts").get("Vorkath").getAsInt());
+        name = "Test Two"; snapshotNow(); drain();
+        assertEquals(0, snapshot().getAsJsonObject("boss_counts").size());
     }
 }

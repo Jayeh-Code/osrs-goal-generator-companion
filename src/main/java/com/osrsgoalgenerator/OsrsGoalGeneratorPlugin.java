@@ -25,6 +25,7 @@ import javax.inject.Inject;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.runelite.api.Client;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.GameState;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.Player;
@@ -56,7 +57,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
 {
     private static final Logger LOG = Logger.getLogger(OsrsGoalGeneratorPlugin.class.getName());
     private static final int SCHEMA_VERSION = 1;
-    private static final String PLUGIN_VERSION = "0.2.0-beta.1";
+    private static final String PLUGIN_VERSION = "0.2.0-beta.2";
     private static final String SYNC_FILE = "sync.json";
     private static final String CACHE_FILE = "collection-cache.json";
     private static final int COLLECTION_HEADER_TITLE_INDEX = 0;
@@ -98,6 +99,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
     private long lastSnapshotQueuedAt;
     private long lastHeartbeatAt;
     private int diaryTicks;
+    private final Map<String, Integer> bossCounts = new LinkedHashMap<>();
 
     @Provides
     OsrsGoalGeneratorConfig provideConfig(ConfigManager configManager)
@@ -217,7 +219,20 @@ public class OsrsGoalGeneratorPlugin extends Plugin
     @Subscribe
     public void onChatMessage(ChatMessage event)
     {
+        if (!enabled || !collectionCacheLoaded || client.getGameState() != GameState.LOGGED_IN
+            || client.getLocalPlayer() == null) return;
+        ensureSessionForPlayer(client.getLocalPlayer().getName());
         String message = Text.removeTags(event.getMessage());
+        if (event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM)
+        {
+            Map.Entry<String, Integer> count = BossCounts.parse(message);
+            if (count != null && !currentPlayerName.isEmpty())
+            {
+                bossCounts.merge(count.getKey(), count.getValue(), Math::max);
+                lastEvent = "boss_count:" + count.getKey();
+                queueSnapshot(true, true);
+            }
+        }
         Matcher matcher = COLLECTION_UNLOCK_PATTERN.matcher(message);
         if (!matcher.find())
         {
@@ -307,6 +322,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
             return;
         }
 
+        bossCounts.clear();
         currentPlayerName = clean;
         diaryTicks = 0;
         sessionStartedAt = Instant.now().toString();
@@ -400,6 +416,7 @@ public class OsrsGoalGeneratorPlugin extends Plugin
             }
         }
         document.put("skills", skills);
+        document.put("boss_counts", connected ? new LinkedHashMap<>(bossCounts) : new LinkedHashMap<>());
 
         Map<String, Object> session = new LinkedHashMap<>();
         session.put("started_at", sessionStartedAt);
